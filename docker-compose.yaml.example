@@ -10,3 +10,5 @@ services:
     volumes:
       - ./snapshots:/snapshots
       - ./errors:/errors
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
