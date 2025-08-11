@@ -65,7 +65,8 @@ All settings are controlled via environment variables. Below are the main ones:
 
 1. Clone or download the repository.
 2. Customize `.env` file with your settings.
-3. Run the container:
+3. Customize `docker-compose.yaml` file with your settings.
+4. Run the container:
 
 ```bash
 docker-compose up -d
