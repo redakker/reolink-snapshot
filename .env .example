@@ -1,0 +1,24 @@
+# Camera config
+CAMERA_USER=admin
+CAMERA_PASS=somepassword
+CAMERA_IP=IP_OF_A_CAMERA
+SNAPSHOT_URL_TEMPLATE=https://{ip}/cgi-bin/api.cgi?cmd=Snap&channel=0&user={user}&password={password}
+
+# Save location inside container
+SAVE_DIR=/snapshots
+ERROR_DIR=/errors
+
+# MQTT config
+MQTT_BROKER=mqtt-broker.local
+MQTT_PORT=1883
+MQTT_USER=
+MQTT_PASS=
+MQTT_TOPIC_TRIGGER=camera/snapshot/trigger
+MQTT_TOPIC_STATUS=camera/snapshot/status
+
+# TLS verification: set to 1 to verify certs, 0 to skip
+TLS_VERIFY=0
+
+# Optional
+LOG_LEVEL=INFO
+QOS=1

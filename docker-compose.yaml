@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  snapshotter:
+    build: .
+    container_name: snapshotter
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./snapshots:/snapshots
+      - ./errors:/errors
