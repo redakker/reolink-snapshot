@@ -1,14 +1,14 @@
-# Simple, small image for the snapshotter
+# Snapshotter with optional RTSP (ffmpeg)
 FROM python:3.11.8-slim
 
 ENV PYTHONUNBUFFERED=1
 
-# create app dir
 WORKDIR /app
 
-# install system deps (for requests TLS backend if needed)
+# install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    ffmpeg \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,15 +20,17 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY snapshotter.py /app/snapshotter.py
 RUN chmod +x /app/snapshotter.py
 
-# create snapshot folder
-RUN mkdir -p /snapshots
-VOLUME ["/snapshots"]
+# create dirs
+RUN mkdir -p /snapshots /errors
+VOLUME ["/snapshots", "/errors"]
 
-# default envs (safe defaults; override in docker-compose)
+# defaults
 ENV SAVE_DIR=/snapshots
+ENV ERROR_DIR=/errors
 ENV SNAPSHOT_URL_TEMPLATE="https://{ip}/cgi-bin/api.cgi?cmd=Snap&channel=0&user={user}&password={password}"
 ENV MQTT_TOPIC_TRIGGER="camera/snapshot/trigger"
 ENV MQTT_TOPIC_STATUS="camera/snapshot/status"
 ENV TLS_VERIFY=0
+ENV SNAPSHOT_MODE=web
 
 CMD ["/usr/local/bin/python", "/app/snapshotter.py"]

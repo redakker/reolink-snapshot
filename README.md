@@ -1,150 +1,129 @@
 
 # Reolink Camera Snapshotter
 
-A lightweight Python application that takes snapshots from a configured Reolink camera, triggered by MQTT messages. The application runs inside a Docker container for easy deployment.
+A lightweight Python service that captures snapshots from a Reolink camera triggered by MQTT messages.
+Snapshots can be taken either directly from the camera's **HTTP snapshot API** or from the **RTSP stream** using `ffmpeg`.
+The application runs in a Docker container for easy deployment.
 
 ---
 
 ## Features
 
-- Connects to Reolink cameras to fetch snapshots on demand.
-- Triggered remotely via MQTT messages.
-- Publishes snapshot success/failure status back to MQTT.
-- Configurable via environment variables.
-- Encapsulated in a Docker container for portability.
-- Supports TLS verification options for HTTPS connections.
-- Logs errors to a separate folder for easy debugging.
+- Capture snapshots from Reolink cameras via HTTP API or RTSP stream.
+- Trigger snapshots remotely using MQTT messages.
+- Publish success/error status to MQTT.
+- Fully configurable via environment variables.
+- Runs inside Docker.
+- Option to disable SSL certificate verification.
+- Error logging to file.
 
 ---
 
 ## How It Works
 
-- Listens to an MQTT topic (`MQTT_TOPIC_TRIGGER`) for trigger messages.
-- On trigger, requests a snapshot image from the camera using the configured URL.
-- Saves the snapshot image with a timestamped filename.
-- Publishes the result (success/failure and details) on a status MQTT topic (`MQTT_TOPIC_STATUS`).
-- Errors are logged both to console and an error log file.
+- The service subscribes to the MQTT topic defined in `MQTT_TOPIC_TRIGGER`.
+- When a message is received:
+  - **HTTP mode**: calls the camera’s HTTP snapshot API.
+  - **RTSP mode**: uses `ffmpeg` to extract a single frame from the RTSP stream.
+- Saves the image with a timestamped filename.
+- Publishes the result (success/error) as JSON to the `MQTT_TOPIC_STATUS` topic.
+- Logs errors both to console and to a logfile.
 
 ---
 
 ## Requirements
 
-- Reolink camera accessible via IP with snapshot URL API.
-- MQTT broker accessible for publishing and subscribing.
-- Docker environment (recommended) or Python 3.11+ to run natively.
+- Reolink camera with either HTTP API or RTSP stream available.
+- MQTT broker.
+- Docker environment (recommended) or Python 3.11+ with `ffmpeg` installed.
 
 ---
 
 ## Configuration
 
-All settings are controlled via environment variables. Below are the main ones:
+The service is configured via environment variables.
+Two snapshot modes are available:
 
-| Variable              | Description                                        | Example                         |
-|-----------------------|----------------------------------------------------|---------------------------------|
-| `CAMERA_USER`          | Username for the camera                             | `admin`                        |
-| `CAMERA_PASS`          | Password for the camera                             | `password123`                  |
-| `CAMERA_IP`            | IP address or hostname of the camera               | `192.168.1.100`                |
-| `SNAPSHOT_URL_TEMPLATE`| URL template to fetch snapshot; use `{ip}`, `{user}`, `{password}` placeholders | `https://{ip}/cgi-bin/api.cgi?cmd=Snap&channel=0&user={user}&password={password}` |
-| `SAVE_DIR`             | Directory path to save snapshots                    | `/snapshots`                   |
-| `ERROR_DIR`            | Directory path to save error logs                   | `/errors`                      |
-| `MQTT_BROKER`          | MQTT broker hostname or IP                          | `mqtt.local`                   |
-| `MQTT_PORT`            | MQTT broker port                                    | `1883`                        |
-| `MQTT_USER`            | MQTT username (optional)                            |                               |
-| `MQTT_PASS`            | MQTT password (optional)                            |                               |
-| `MQTT_TOPIC_TRIGGER`   | MQTT topic to listen for snapshot triggers         | `camera/snapshot/trigger`      |
-| `MQTT_TOPIC_STATUS`    | MQTT topic to publish snapshot status              | `camera/snapshot/status`       |
-| `TLS_VERIFY`           | Whether to verify TLS certificates (1=true, 0=false)| `0`                          |
-| `LOG_LEVEL`            | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`)| `INFO`                   |
-| `QOS`                  | MQTT Quality of Service level (0, 1, or 2)          | `1`                           |
+### 1. HTTP Snapshot API mode
+| Variable                | Description                                        | Example |
+|-------------------------|----------------------------------------------------|---------|
+| `CAMERA_USER`           | Camera username                                    | `admin` |
+| `CAMERA_PASS`           | Camera password                                    | `password123` |
+| `CAMERA_IP`             | Camera IP address                                  | `192.168.1.50` |
+| `SNAPSHOT_URL_TEMPLATE` | HTTP template for snapshot API                     | `https://{ip}/cgi-bin/api.cgi?cmd=Snap&channel=0&user={user}&password={password}` |
+
+### 2. RTSP mode
+| Variable      | Description                        | Example |
+|---------------|------------------------------------|---------|
+| `RTSP_URL`    | RTSP stream URL of the camera      | `rtsp://admin:password123@192.168.1.50:554/h264Preview_01_main` |
+
+### Common variables
+| Variable            | Description                     | Example |
+|---------------------|---------------------------------|---------|
+| `SNAPSHOT_MODE`     | Selects `http` or `rtsp` mode   | `http` or `rtsp` |
+| `SNAPSHOT_PATH`     | Path to save snapshots          | `/snapshots` |
+| `MQTT_HOST`         | MQTT broker host                | `mqtt.local` |
+| `MQTT_PORT`         | MQTT broker port                | `1883` |
+| `MQTT_USER`         | MQTT username                   | `mqttuser` |
+| `MQTT_PASS`         | MQTT password                   | `mqttpass` |
+| `MQTT_TOPIC_TRIGGER`| MQTT topic for trigger messages | `camera/snapshot/trigger` |
+| `MQTT_TOPIC_STATUS` | MQTT topic for status messages  | `camera/snapshot/status` |
+| `VERIFY_TLS`        | Verify SSL certificates         | `true` or `false` |
 
 ---
 
-## Usage
+## Running with Docker
 
-### Run with Docker Compose
+Example `docker-compose.yml`:
 
-1. Clone or download the repository.
-2. Customize `.env` file with your settings.
-3. Customize `docker-compose.yaml` file with your settings.
-4. Run the container:
-
-```bash
-docker-compose up -d
+```yaml
+version: '3.9'
+services:
+  snapshotter:
+    image: snapshotter:latest
+    container_name: reolink-snapshotter
+    restart: unless-stopped
+    environment:
+      - SNAPSHOT_MODE=rtsp
+      - RTSP_URL=rtsp://admin:password123@192.168.1.50:554/h264Preview_01_main
+      - SNAPSHOT_PATH=/snapshots
+      - MQTT_HOST=mqtt.local
+      - MQTT_PORT=1883
+      - MQTT_USER=mqttuser
+      - MQTT_PASS=mqttpass
+      - MQTT_TOPIC_TRIGGER=camera/snapshot/trigger
+      - MQTT_TOPIC_STATUS=camera/snapshot/status
+      - VERIFY_TLS=false
+    volumes:
+      - ./snapshots:/snapshots
 ```
 
-Snapshots will be saved inside the mapped `./snapshots` directory on your host.
+---
 
-### Triggering a Snapshot
+## Triggering a Snapshot
 
-Send any MQTT message (can be empty) to the configured trigger topic, e.g.:
-
-```bash
-mosquitto_pub -h mqtt.local -t camera/snapshot/trigger -m ""
-```
-
-Optionally, send JSON to specify filename prefix:
+Send an MQTT message to the trigger topic:
 
 ```bash
-mosquitto_pub -h mqtt.local -t camera/snapshot/trigger -m '{"prefix":"frontdoor"}'
+mosquitto_pub -h mqtt.local -t camera/snapshot/trigger -m "take_picture"
 ```
 
-### Status Messages
-
-The snapshotter publishes JSON status messages on the configured status topic indicating success or failure:
+The service will respond on the status topic with a JSON message:
 
 ```json
-{
-  "timestamp": "2025-08-11T20:40:00.123456",
-  "success": true,
-  "info": "/snapshots/snapshot_20250811_204000.jpg",
-  "request_payload": "{"prefix":"frontdoor"}"
-}
+{ "status": "success", "file": "snapshot_2025-08-21_12-00-00.jpg" }
 ```
 
----
+or
 
-## Dockerfile
-
-The container is based on `python:3.11-slim`, installs dependencies, and runs the `snapshotter.py` script. Volumes for snapshots and error logs are exposed.
-
----
-
-## Development / Running Locally
-
-1. Install Python 3.11+.
-2. Install dependencies:
-
-```bash
-pip install -r requirements.txt
+```json
+{ "status": "error", "message": "RTSP stream not reachable" }
 ```
-
-3. Set required environment variables (or export from `.env`).
-4. Run the script:
-
-```bash
-python snapshotter.py
-```
-
----
-
-## Logging
-
-- Info and debug logs are output to console.
-- Errors are additionally logged to `/errors/error.log` file (inside container or host volume).
 
 ---
 
 ## Notes
 
-- Ensure the camera URL template matches your camera model and API.
-- If using HTTPS and self-signed certificates, set `TLS_VERIFY=0` to skip verification.
-- MQTT credentials are optional if your broker allows anonymous access.
-- Filenames include timestamps and optional prefixes for easier organization.
-
----
-
-## License
-
-MIT License
-
----
+- In **HTTP mode**, make sure the camera’s snapshot API is enabled.
+- In **RTSP mode**, `ffmpeg` must be available inside the container.
+- Recommended to mount the `/snapshots` directory as a persistent volume.

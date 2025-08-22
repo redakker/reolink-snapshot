@@ -9,21 +9,19 @@ from pathlib import Path
 import requests
 import time
 import traceback
+import subprocess
 import paho.mqtt.client as mqtt
 
 # --- Required env vars ---
 REQUIRED_ENV = [
-    "CAMERA_USER",
-    "CAMERA_PASS",
-    "CAMERA_IP",
-    "SNAPSHOT_URL_TEMPLATE",
     "SAVE_DIR",
     "ERROR_DIR",
     "MQTT_BROKER",
     "MQTT_PORT",
     "MQTT_TOPIC_TRIGGER",
     "MQTT_TOPIC_STATUS",
-    "TLS_VERIFY"
+    "TLS_VERIFY",
+    "SNAPSHOT_MODE"
 ]
 
 missing = [var for var in REQUIRED_ENV if var not in os.environ]
@@ -31,10 +29,6 @@ if missing:
     sys.exit(f"Missing required environment variables: {', '.join(missing)}")
 
 # --- Configuration from env ---
-CAMERA_USER = os.environ["CAMERA_USER"]
-CAMERA_PASS = os.environ["CAMERA_PASS"]
-CAMERA_IP = os.environ["CAMERA_IP"]
-SNAPSHOT_URL_TEMPLATE = os.environ["SNAPSHOT_URL_TEMPLATE"]
 SAVE_DIR = Path(os.environ["SAVE_DIR"])
 ERROR_DIR = Path(os.environ["ERROR_DIR"])
 MQTT_BROKER = os.environ["MQTT_BROKER"]
@@ -46,6 +40,14 @@ MQTT_TOPIC_STATUS = os.environ["MQTT_TOPIC_STATUS"]
 TLS_VERIFY = os.environ["TLS_VERIFY"] not in ("0", "false", "False", "")
 QOS = int(os.environ.get("QOS", "1"))
 CLIENT_ID = os.environ.get("CLIENT_ID", f"snapshotter-{int(time.time())}")
+SNAPSHOT_MODE = os.environ["SNAPSHOT_MODE"].lower()  # "web" vagy "rtsp"
+
+# Kamera adatok
+CAMERA_USER = os.environ.get("CAMERA_USER")
+CAMERA_PASS = os.environ.get("CAMERA_PASS")
+CAMERA_IP = os.environ.get("CAMERA_IP")
+SNAPSHOT_URL_TEMPLATE = os.environ.get("SNAPSHOT_URL_TEMPLATE")
+RTSP_URL = os.environ.get("RTSP_URL")
 
 # --- Logging setup ---
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,12 +57,10 @@ log_level = os.environ.get("LOG_LEVEL", "INFO")
 logger = logging.getLogger("snapshotter")
 logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
-# Console handler
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 logger.addHandler(console_handler)
 
-# File handler for errors
 error_log_file = ERROR_DIR / "error.log"
 error_handler = logging.FileHandler(error_log_file, encoding="utf-8")
 error_handler.setLevel(logging.ERROR)
@@ -72,12 +72,13 @@ client = mqtt.Client(client_id=CLIENT_ID, clean_session=True)
 if MQTT_USER:
     client.username_pw_set(MQTT_USER, MQTT_PASS)
 
-
+# --- Snapshot functions ---
 def build_snapshot_url():
+    if not SNAPSHOT_URL_TEMPLATE:
+        raise RuntimeError("SNAPSHOT_URL_TEMPLATE is not set")
     return SNAPSHOT_URL_TEMPLATE.format(ip=CAMERA_IP, user=CAMERA_USER, password=CAMERA_PASS)
 
-
-def take_snapshot(save_dir: Path, filename_prefix: str = "snapshot"):
+def take_snapshot_web(save_dir: Path, filename_prefix: str = "snapshot"):
     url = build_snapshot_url()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = save_dir / f"{filename_prefix}_{timestamp}.jpg"
@@ -92,11 +93,42 @@ def take_snapshot(save_dir: Path, filename_prefix: str = "snapshot"):
         logger.info("Saved snapshot to %s", filename)
         return True, str(filename)
     except Exception as e:
-        logger.error("Failed to take snapshot: %s", e)
+        logger.error("Failed to take snapshot (web): %s", e)
         logger.error(traceback.format_exc())
         return False, str(e)
 
+def take_snapshot_rtsp(save_dir: Path, filename_prefix: str = "snapshot"):
+    if not RTSP_URL:
+        return False, "RTSP_URL is not set"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = save_dir / f"{filename_prefix}_{timestamp}.jpg"
+    try:
+        logger.info("Capturing snapshot from RTSP stream %s", RTSP_URL)
+        cmd = [
+            "ffmpeg",
+            "-rtsp_transport", "tcp",
+            "-i", RTSP_URL,
+            "-frames:v", "1",
+            "-q:v", "2",
+            "-y", str(filename)
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info("Saved snapshot to %s", filename)
+        return True, str(filename)
+    except Exception as e:
+        logger.error("Failed to take snapshot (RTSP): %s", e)
+        logger.error(traceback.format_exc())
+        return False, str(e)
 
+def take_snapshot(save_dir: Path, filename_prefix: str = "snapshot"):
+    if SNAPSHOT_MODE == "rtsp":
+        return take_snapshot_rtsp(save_dir, filename_prefix)
+    elif SNAPSHOT_MODE == "web":
+        return take_snapshot_web(save_dir, filename_prefix)
+    else:
+        return False, f"Unknown SNAPSHOT_MODE: {SNAPSHOT_MODE}"
+
+# --- MQTT callbacks ---
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         logger.info("Connected to MQTT broker %s:%s", MQTT_BROKER, MQTT_PORT)
@@ -104,7 +136,6 @@ def on_connect(client, userdata, flags, rc):
         logger.info("Subscribed to trigger topic: %s", MQTT_TOPIC_TRIGGER)
     else:
         logger.error("MQTT connect failed with rc=%s", rc)
-
 
 def publish_status(success: bool, info: str, request_payload=None):
     payload = {
@@ -118,7 +149,6 @@ def publish_status(success: bool, info: str, request_payload=None):
         logger.debug("Published status to %s: %s", MQTT_TOPIC_STATUS, payload)
     except Exception as e:
         logger.error("Failed to publish status: %s", e)
-
 
 def process_trigger_message(topic, payload_bytes):
     try:
@@ -142,7 +172,6 @@ def process_trigger_message(topic, payload_bytes):
 
     threading.Thread(target=job, daemon=True).start()
 
-
 def on_message(client, userdata, msg):
     try:
         process_trigger_message(msg.topic, msg.payload)
@@ -150,11 +179,10 @@ def on_message(client, userdata, msg):
         logger.error("Error in on_message: %s", e)
         logger.error(traceback.format_exc())
 
-
 def on_disconnect(client, userdata, rc):
     logger.warning("Disconnected from MQTT (rc=%s). Will attempt reconnect.", rc)
 
-
+# --- Main loop ---
 def main():
     client.on_connect = on_connect
     client.on_message = on_message
@@ -179,7 +207,6 @@ def main():
     finally:
         client.loop_stop()
         client.disconnect()
-
 
 if __name__ == "__main__":
     main()
