@@ -97,28 +97,45 @@ def take_snapshot_web(save_dir: Path, filename_prefix: str = "snapshot"):
         logger.error(traceback.format_exc())
         return False, str(e)
 
-def take_snapshot_rtsp(save_dir: Path, filename_prefix: str = "snapshot"):
+def take_snapshot_rtsp(save_dir: Path, filename_prefix: str = "snapshot", output_format: str = "jpg"):
+    """
+    Takes a snapshot from the RTSP stream.
+    output_format: 'jpg' or 'png' ('png' is lossless, best for pixel-precise snapshots)
+    """
     if not RTSP_URL:
         return False, "RTSP_URL is not set"
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = save_dir / f"{filename_prefix}_{timestamp}.jpg"
+    ext = output_format.lower()
+    filename = save_dir / f"{filename_prefix}_{timestamp}.{ext}"
+
     try:
         logger.info("Capturing snapshot from RTSP stream %s", RTSP_URL)
+
+        # FFmpeg command
         cmd = [
             "ffmpeg",
             "-rtsp_transport", "tcp",
             "-i", RTSP_URL,
+            "-vf", "select='eq(pict_type,I)'",  # only I-frame
+            "-vsync", "0",                       # prevent timing issues
             "-frames:v", "1",
-            "-q:v", "2",
             "-y", str(filename)
         ]
+
+        if ext == "jpg":
+            cmd.insert(-1, "-q:v")
+            cmd.insert(-1, "1")  # max JPEG quality
+
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logger.info("Saved snapshot to %s", filename)
         return True, str(filename)
+
     except Exception as e:
         logger.error("Failed to take snapshot (RTSP): %s", e)
         logger.error(traceback.format_exc())
         return False, str(e)
+
 
 def take_snapshot(save_dir: Path, filename_prefix: str = "snapshot"):
     if SNAPSHOT_MODE == "rtsp":
